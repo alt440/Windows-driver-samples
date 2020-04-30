@@ -41,7 +41,7 @@ Environment:
 #include "nonpnp.tmh"
 
 
-#ifdef ALLOC_PRAGMA
+#ifdef ALLOC_PRAGMA //if ALLOC_PRAGMA is defined, send these commands to compiler
 #pragma alloc_text( INIT, DriverEntry )
 #pragma alloc_text( PAGE, NonPnpDeviceAdd)
 #pragma alloc_text( PAGE, NonPnpEvtDriverContextCleanup)
@@ -55,12 +55,17 @@ Environment:
 #endif // ALLOC_PRAGMA
 
 
-NTSTATUS
-DriverEntry(
-    IN OUT PDRIVER_OBJECT   DriverObject,
-    IN PUNICODE_STRING      RegistryPath
-    )
+NTSTATUS DriverEntry( IN OUT PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING RegistryPath)
 /*++
+
+This is like the main method in C - Except now it is for a driver.
+The IN and OUT keywords simply indicate whether the argument is inputted or outputted; other than that,
+not much more importance.
+PDRIVER_OBJECT indicates that this object is a pointer (because of the P in front). Same goes for PUNICODE_STRING
+NTSTATUS is a long type defined with some constraints.
+
+For more information check out tutorial here: 
+https://www.youtube.com/watch?v=XUlbYRFFYf0&list=PLZ4EgN7ZCzJx2DRXTRUXRrB2njWnx1kA2&index=1
 
 Routine Description:
     This routine is called by the Operating System to initialize the driver.
@@ -79,19 +84,19 @@ Return Value:
 
 --*/
 {
-    NTSTATUS                       status;
+    NTSTATUS                       status; // could be STATUS_SUCCESS, for example
     WDF_DRIVER_CONFIG              config;
     WDFDRIVER                      hDriver;
     PWDFDEVICE_INIT                pInit = NULL;
     WDF_OBJECT_ATTRIBUTES          attributes;
 
-    KdPrint(("Driver Frameworks NONPNP Legacy Driver Example\n"));
+    KdPrint(("Driver Frameworks NONPNP Legacy Driver Example\n")); //prints to kernel debugger (windbg)
 
 
     WDF_DRIVER_CONFIG_INIT(
         &config,
         WDF_NO_EVENT_CALLBACK // This is a non-pnp driver.
-        );
+        ); //initializes the config variable to hold value WDF_NO_EVENT_CALLBACK. WDF_NO_EVENT_CALLBACK is of value NULL.
 
     //
     // Tell the framework that this is non-pnp driver so that it doesn't
@@ -101,7 +106,7 @@ Return Value:
 
     //
     // NonPnp driver must explicitly register an unload routine for
-    // the driver to be unloaded.
+    // the driver to be unloaded. Driver is unloaded when program terminates.
     //
     config.EvtDriverUnload = NonPnpEvtDriverUnload;
 
@@ -109,7 +114,7 @@ Return Value:
     // Register a cleanup callback so that we can call WPP_CLEANUP when
     // the framework driver object is deleted during driver unload.
     //
-    WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
+    WDF_OBJECT_ATTRIBUTES_INIT(&attributes); //init attributes
     attributes.EvtCleanupCallback = NonPnpEvtDriverContextCleanup;
 
     //
@@ -120,7 +125,7 @@ Return Value:
                             &attributes,
                             &config,
                             &hDriver);
-    if (!NT_SUCCESS(status)) {
+    if (!NT_SUCCESS(status)) { // this verifies if status is equal to STATUS_SUCCESS: if not, then enter if condition.
         KdPrint (("NonPnp: WdfDriverCreate failed with status 0x%x\n", status));
         return status;
     }
