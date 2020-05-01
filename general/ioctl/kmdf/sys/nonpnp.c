@@ -42,6 +42,15 @@ Environment:
 
 
 #ifdef ALLOC_PRAGMA //if ALLOC_PRAGMA is defined, send these commands to compiler
+/*
+If you compile a simple hello world driver, then you will see that the PE (Portable Executable) 
+section called '.text' will have the 'Not pageable' characteristics flag set. So yes, by default, 
+all driver code is in that section unless you mark it as being pageable, which will make it end 
+up in the 'PAGE' section instead of the '.text' section.
+
+Essentially, the next #pragma commands are required to make our functions below go into the 'PAGE'
+section instead of the '.text' section.
+*/
 #pragma alloc_text( INIT, DriverEntry )
 #pragma alloc_text( PAGE, NonPnpDeviceAdd)
 #pragma alloc_text( PAGE, NonPnpEvtDriverContextCleanup)
@@ -120,9 +129,9 @@ Return Value:
     //
     // Create a framework driver object to represent our driver.
     //
-    status = WdfDriverCreate(DriverObject,
-                            RegistryPath,
-                            &attributes,
+    status = WdfDriverCreate(DriverObject, //parameter of this function DriverEntry
+                            RegistryPath, //parameter of this function DriverEntry
+                            &attributes, //the next three vars were configured at the beginning of this method
                             &config,
                             &hDriver);
     if (!NT_SUCCESS(status)) { // this verifies if status is equal to STATUS_SUCCESS: if not, then enter if condition.
@@ -137,6 +146,9 @@ Return Value:
     // if we return failure status from DriverEntry. This
     // eliminates the need to call WPP_CLEANUP in every path
     // of DriverEntry.
+    //
+    // WPP_CLEANUP deactivates software tracing in a driver.
+    // Software tracing enables 'logging' of information coming from the driver.
     //
     WPP_INIT_TRACING( DriverObject, RegistryPath );
 
@@ -156,10 +168,10 @@ Return Value:
     //
     pInit = WdfControlDeviceInitAllocate(
                             hDriver,
-                            &SDDL_DEVOBJ_SYS_ALL_ADM_RWX_WORLD_RW_RES_R
+                            &SDDL_DEVOBJ_SYS_ALL_ADM_RWX_WORLD_RW_RES_R //?? SDDL comes from Security Description Definition Language
                             );
 
-    if (pInit == NULL) {
+    if (pInit == NULL) { // so the SDDL_... value is not a constant. If it equals NULL, then it means that driver does not have enough resources to be processed
         status = STATUS_INSUFFICIENT_RESOURCES;
         return status;
     }
@@ -173,11 +185,7 @@ Return Value:
     return status;
 }
 
-NTSTATUS
-NonPnpDeviceAdd(
-    IN WDFDRIVER Driver,
-    IN PWDFDEVICE_INIT DeviceInit
-    )
+NTSTATUS NonPnpDeviceAdd(IN WDFDRIVER Driver, IN PWDFDEVICE_INIT DeviceInit)
 /*++
 
 Routine Description:
@@ -198,18 +206,20 @@ Return Value:
 
 --*/
 {
-    NTSTATUS                       status;
+    NTSTATUS                        status;
     WDF_OBJECT_ATTRIBUTES           attributes;
-    WDF_IO_QUEUE_CONFIG      ioQueueConfig;
-    WDF_FILEOBJECT_CONFIG fileConfig;
-    WDFQUEUE                            queue;
-    WDFDEVICE   controlDevice;
+    WDF_IO_QUEUE_CONFIG             ioQueueConfig;
+    // The WDF_FILEOBJECT_CONFIG structure contains configuration information of a driver's framework file objects.
+    WDF_FILEOBJECT_CONFIG           fileConfig;
+    WDFQUEUE                        queue;
+    WDFDEVICE                       controlDevice;
+    
     DECLARE_CONST_UNICODE_STRING(ntDeviceName, NTDEVICE_NAME_STRING) ;
     DECLARE_CONST_UNICODE_STRING(symbolicLinkName, SYMBOLIC_NAME_STRING) ;
 
     UNREFERENCED_PARAMETER( Driver );
 
-    PAGED_CODE();
+    PAGED_CODE(); //probably links to the #pragma commands on top
 
     TraceEvents(TRACE_LEVEL_VERBOSE, DBG_INIT,
                    "NonPnpDeviceAdd DeviceInit %p\n", DeviceInit);
@@ -219,22 +229,34 @@ Return Value:
     //
     WdfDeviceInitSetExclusive(DeviceInit, TRUE);
 
-    WdfDeviceInitSetIoType(DeviceInit, WdfDeviceIoBuffered);
+    //
+    // The WdfDeviceInitSetIoType method sets the method or preference for how a driver will access 
+    // the data buffers that are included in read and write requests for a specified device.
+    // WdfDeviceIoBuffered means that the device will use the read/write buffers to store content (default)
+    // WdfDeviceIoDirect means that the device will store its contents on disk
+    //
+    WdfDeviceInitSetIoType(DeviceInit, WdfDeviceIoBuffered); 
 
 
-    status = WdfDeviceInitAssignName(DeviceInit, &ntDeviceName);
+    status = WdfDeviceInitAssignName(DeviceInit, &ntDeviceName); //just assigning the name
 
     if (!NT_SUCCESS(status)) {
         TraceEvents(TRACE_LEVEL_ERROR, DBG_INIT, "WdfDeviceInitAssignName failed %!STATUS!", status);
         goto End;
     }
 
+    //
+    // First parameter is the WDFDEVICE_INIT object.
+    // Second parameter indicates where to find the EvtDeviceShutdownNotification event callback 
+    // function, which indicates to the system that it is about to lose its power (from driver interface).
+    // Third parameter indicates when the device will shutdown.
+    //
     WdfControlDeviceInitSetShutdownNotification(DeviceInit,
                                                 NonPnpShutdown,
                                                 WdfDeviceShutdown);
 
     //
-    // Initialize WDF_FILEOBJECT_CONFIG_INIT struct to tell the
+    // Initialize WDF_FILEOBJECT_CONFIG struct to tell the
     // framework whether you are interested in handling Create, Close and
     // Cleanup requests that gets generated when an application or another
     // kernel component opens an handle to the device. If you don't register
@@ -243,14 +265,24 @@ Return Value:
     // events if it wants to do security validation and also wants to maintain
     // per handle (fileobject) context.
     //
+    
+    //
+    // When an application or a driver attempts to access a device, typically by 
+    // creating or opening a file, the operating system sends a file creation request 
+    // to the driver stack. When the application or driver has finished using the device, 
+    // the system sends file cleanup and close requests to the driver stack. The request 
+    // types of these three requests are WdfRequestTypeCreate, WdfRequestTypeCleanup, 
+    // and WdfRequestTypeClose, respectively.
+    //
 
     WDF_FILEOBJECT_CONFIG_INIT(
                         &fileConfig,
-                        NonPnpEvtDeviceFileCreate,
-                        NonPnpEvtFileClose,
-                        WDF_NO_EVENT_CALLBACK // not interested in Cleanup
+                        NonPnpEvtDeviceFileCreate, // create
+                        NonPnpEvtFileClose, // close
+                        WDF_NO_EVENT_CALLBACK // not interested in Cleanup -- NULL
                         );
 
+    // Just assigns fileConfig to DeviceInit. No special attributes, so NULL is given to attributes.
     WdfDeviceInitSetFileObjectConfig(DeviceInit,
                                        &fileConfig,
                                        WDF_NO_OBJECT_ATTRIBUTES);
@@ -261,11 +293,20 @@ Return Value:
     // EvtDeviceIoInProcessContext callback so that we can handle the request
     // in the calling threads context.
     //
+    // Essentially, the NEITHER I/O type (and the Buffered and Direct I/O) is described here:
+    // https://docs.microsoft.com/en-ca/windows-hardware/drivers/wdf/accessing-data-buffers-in-wdf-drivers
+    // The 'Neither Buffered nor Direct I/O method' let the I/O manager assign virtual space for the I/O request.
+    // Driver must verify the space it has is really available.
+    // This method is only for drivers supporting the NEITHER I/O type.
+    //
     WdfDeviceInitSetIoInCallerContextCallback(DeviceInit,
                                     NonPnpEvtDeviceIoInCallerContext);
 
     //
     // Specify the size of device context
+    // A device context is a Windows data structure containing information about the drawing attributes 
+    // of a device such as a display or a printer. All drawing calls are made through a device-context 
+    // object, which encapsulates the Windows APIs for drawing lines, shapes, and text.
     //
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes,
                                     CONTROL_DEVICE_EXTENSION);
@@ -282,8 +323,6 @@ Return Value:
     // Create a symbolic link for the control object so that usermode can open
     // the device.
     //
-
-
     status = WdfDeviceCreateSymbolicLink(controlDevice,
                                 &symbolicLinkName);
 
@@ -297,8 +336,13 @@ Return Value:
 
     //
     // Configure a default queue so that requests that are not
-    // configure-fowarded using WdfDeviceConfigureRequestDispatching to goto
+    // configure-fowarded using WdfDeviceConfigureRequestDispatching to go to
     // other queues get dispatched here.
+    //
+    // The different configurations of a queue are:
+    // WdfIoQueueDispatchSequential: Get requests one at a time
+    // WdfIoQueueDispatchParallel: Get requests in parallel
+    // WdfIoQueueDispatchManual: Manually let the driver collect the requests with the method WdfIoQueueRetrieveNextRequest
     //
     WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&ioQueueConfig,
                                     WdfIoQueueDispatchSequential);
